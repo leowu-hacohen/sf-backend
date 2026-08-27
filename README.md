@@ -107,9 +107,12 @@ also read):
 (case-insensitive). Everything else is optional.
 
 ```
-first_name, last_name, email, phone, company, job_title,
+first_name, last_name, email, phone, company, job_title, photo_url,
 address, city, state, postal_code, country, notes
 ```
+
+`photo_url` is nullable, at most 2000 characters, and must be an absolute
+`http(s)` URL with a host; clients fall back to initials when it is unset.
 
 Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
 

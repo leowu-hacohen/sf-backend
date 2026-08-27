@@ -1,6 +1,6 @@
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -50,6 +50,22 @@ def init_db() -> None:
     from app import models  # noqa: F401  (register models on Base.metadata)
 
     Base.metadata.create_all(bind=engine)
+    _upgrade_schema()
+
+
+def _upgrade_schema() -> None:
+    """
+    Add columns that create_all() will not: it only creates missing tables, so a
+    persistent database made before a column existed would break every query.
+    Nullable additions are safe to apply as plain ADD COLUMN on SQLite/PostgreSQL.
+    """
+    added = {"photo_url": "VARCHAR(2000)"}
+
+    existing = {column["name"] for column in inspect(engine).get_columns("contacts")}
+    with engine.begin() as connection:
+        for name, ddl_type in added.items():
+            if name not in existing:
+                connection.execute(text(f"ALTER TABLE contacts ADD COLUMN {name} {ddl_type}"))
 
 
 def get_db() -> Generator[Session, None, None]:

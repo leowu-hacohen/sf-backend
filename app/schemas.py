@@ -1,12 +1,16 @@
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
 
 
 def _require_http_url(value: str | None) -> str | None:
-    """Accept only absolute http(s) URLs, so stored photo links are safe to render."""
-    if value is not None and not value.startswith(("http://", "https://")):
-        raise ValueError("photo_url must start with http:// or https://")
+    """Accept only absolute http(s) URLs with a host, so stored photo links are safe to render."""
+    if value is None:
+        return value
+    parts = urlsplit(value)
+    if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
+        raise ValueError("photo_url must be an absolute http(s) URL, e.g. https://example.com/me.png")
     return value
 
 
