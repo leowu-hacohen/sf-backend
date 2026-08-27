@@ -300,5 +300,49 @@ def test_init_db_migrates_legacy_flat_addresses(client):
 
     init_db()
 
-    migrated = client.get(BASE).json()["items"][0]["addresses"]
-    assert [(a["type"], a["city"], a["country"]) for a in migrated] == [("home", "Boston", "USA")]
+    contact = client.get(BASE).json()["items"][0]
+    assert [(a["type"], a["city"], a["country"]) for a in contact["addresses"]] == [
+        ("home", "Boston", "USA")
+    ]
+
+    # Idempotent: another startup must not duplicate the migrated row.
+    init_db()
+    assert len(client.get(f"{BASE}/{contact['id']}").json()["addresses"]) == 1
+
+    # Move, not copy: clearing the list must survive the next startup.
+    client.patch(f"{BASE}/{contact['id']}", json={"addresses": []})
+    init_db()
+    assert client.get(f"{BASE}/{contact['id']}").json()["addresses"] == []
+
+
+def test_legacy_migration_covers_contacts_missed_earlier(client, payload):
+    from sqlalchemy import text
+
+    from app.database import engine, init_db
+
+    already_normalized = client.post(BASE, json=payload).json()
+
+    with engine.begin() as connection:
+        for ddl in (
+            "ALTER TABLE contacts ADD COLUMN address VARCHAR(300)",
+            "ALTER TABLE contacts ADD COLUMN city VARCHAR(120)",
+            "ALTER TABLE contacts ADD COLUMN state VARCHAR(120)",
+            "ALTER TABLE contacts ADD COLUMN postal_code VARCHAR(20)",
+            "ALTER TABLE contacts ADD COLUMN country VARCHAR(120)",
+        ):
+            connection.execute(text(ddl))
+        connection.execute(
+            text(
+                "INSERT INTO contacts (first_name, last_name, email, city, created_at, updated_at) "
+                "VALUES ('Old', 'Timer', 'old@example.com', 'Boston', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+
+    init_db()
+
+    items = client.get(BASE).json()["items"]
+    by_email = {c["email"]: c["addresses"] for c in items}
+    # The legacy-only contact was migrated even though other rows already existed...
+    assert [a["city"] for a in by_email["old@example.com"]] == ["Boston"]
+    # ...and the already-normalized contact was left exactly as it was.
+    assert by_email[already_normalized["email"]] == already_normalized["addresses"]
