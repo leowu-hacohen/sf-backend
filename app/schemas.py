@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
@@ -12,6 +13,51 @@ def _require_http_url(value: str | None) -> str | None:
     if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
         raise ValueError("photo_url must be an absolute http(s) URL, e.g. https://example.com/me.png")
     return value
+
+
+AddressType = Literal["home", "work", "other"]
+
+
+class AddressBase(BaseModel):
+    """One postal address belonging to a contact."""
+
+    type: AddressType = Field(
+        default="home",
+        description="What kind of address this is. One contact can have several of each.",
+        examples=["home"],
+    )
+    address: str | None = Field(
+        default=None,
+        max_length=300,
+        description="Street address, including unit or suite.",
+        examples=["1 Market St, Suite 400"],
+    )
+    city: str | None = Field(default=None, max_length=120, description="City or locality.", examples=["San Francisco"])
+    state: str | None = Field(
+        default=None,
+        max_length=120,
+        description="State, province, or region.",
+        examples=["CA"],
+    )
+    postal_code: str | None = Field(
+        default=None,
+        max_length=20,
+        description="Postal or ZIP code.",
+        examples=["94105"],
+    )
+    country: str | None = Field(default=None, max_length=120, description="Country name.", examples=["USA"])
+
+
+class AddressCreate(AddressBase):
+    """An address as sent by clients; the server assigns the id."""
+
+
+class AddressRead(AddressBase):
+    """A stored address, as returned inside every contact response."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(description="Server-assigned identifier.", examples=[10])
 
 
 class ContactBase(BaseModel):
@@ -61,26 +107,6 @@ class ContactBase(BaseModel):
         description="Absolute http(s) URL of the contact's photo. Clients fall back to initials when unset.",
         examples=["https://i.pravatar.cc/150?img=47"],
     )
-    address: str | None = Field(
-        default=None,
-        max_length=300,
-        description="Street address, including unit or suite.",
-        examples=["1 Market St, Suite 400"],
-    )
-    city: str | None = Field(default=None, max_length=120, description="City or locality.", examples=["San Francisco"])
-    state: str | None = Field(
-        default=None,
-        max_length=120,
-        description="State, province, or region.",
-        examples=["CA"],
-    )
-    postal_code: str | None = Field(
-        default=None,
-        max_length=20,
-        description="Postal or ZIP code.",
-        examples=["94105"],
-    )
-    country: str | None = Field(default=None, max_length=120, description="Country name.", examples=["USA"])
     notes: str | None = Field(
         default=None,
         description="Free-form notes about the contact. No length limit.",
@@ -98,12 +124,23 @@ _FULL_EXAMPLE = {
     "company": "Analytical Engines",
     "job_title": "Mathematician",
     "photo_url": "https://i.pravatar.cc/150?img=47",
-    "address": "1 Market St, Suite 400",
-    "city": "San Francisco",
-    "state": "CA",
-    "postal_code": "94105",
-    "country": "USA",
     "notes": "Met at the SF hackathon.",
+    "addresses": [
+        {
+            "type": "home",
+            "address": "12 Bloomsbury Sq",
+            "city": "London",
+            "country": "UK",
+        },
+        {
+            "type": "work",
+            "address": "1 Market St, Suite 400",
+            "city": "San Francisco",
+            "state": "CA",
+            "postal_code": "94105",
+            "country": "USA",
+        },
+    ],
 }
 _MINIMAL_EXAMPLE = {"first_name": "Grace", "last_name": "Hopper", "email": "grace@example.com"}
 
@@ -112,6 +149,11 @@ class ContactCreate(ContactBase):
     """Body of `POST /api/v1/contacts`. Only the two names and email are required."""
 
     model_config = ConfigDict(json_schema_extra={"examples": [_FULL_EXAMPLE, _MINIMAL_EXAMPLE]})
+
+    addresses: list[AddressCreate] = Field(
+        default_factory=list,
+        description="Postal addresses to create with the contact.",
+    )
 
 
 class ContactReplace(ContactBase):
@@ -123,6 +165,11 @@ class ContactReplace(ContactBase):
     """
 
     model_config = ConfigDict(json_schema_extra={"examples": [_FULL_EXAMPLE]})
+
+    addresses: list[AddressCreate] = Field(
+        default_factory=list,
+        description="The contact's full address list; existing addresses not in it are removed.",
+    )
 
 
 class ContactUpdate(BaseModel):
@@ -153,12 +200,11 @@ class ContactUpdate(BaseModel):
         max_length=2000,
         description="New photo URL; must be absolute http(s). Send `null` to fall back to initials.",
     )
-    address: str | None = Field(default=None, max_length=300, description="New street address.")
-    city: str | None = Field(default=None, max_length=120, description="New city.")
-    state: str | None = Field(default=None, max_length=120, description="New state or region.")
-    postal_code: str | None = Field(default=None, max_length=20, description="New postal code.")
-    country: str | None = Field(default=None, max_length=120, description="New country.")
     notes: str | None = Field(default=None, description="New notes; replaces the existing text.")
+    addresses: list[AddressCreate] | None = Field(
+        default=None,
+        description="When present, replaces the contact's whole address list; omit to leave addresses untouched.",
+    )
 
     _validate_photo_url = field_validator("photo_url")(_require_http_url)
 
@@ -182,6 +228,9 @@ class ContactRead(ContactBase):
     )
 
     id: int = Field(description="Server-assigned identifier.", examples=[1])
+    addresses: list[AddressRead] = Field(
+        description="The contact's postal addresses, ordered by type then id.",
+    )
     created_at: datetime = Field(
         description="UTC timestamp of when the contact was created.",
         examples=["2026-08-19T16:22:58.189507Z"],

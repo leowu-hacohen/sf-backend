@@ -63,6 +63,7 @@ def _upgrade_schema() -> None:
     added = {"photo_url": "VARCHAR(2000)"}
 
     existing = {column["name"] for column in inspect(engine).get_columns("contacts")}
+    _migrate_flat_addresses(existing)
     for name, ddl_type in added.items():
         if name in existing:
             continue
@@ -86,3 +87,29 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+_LEGACY_ADDRESS_COLUMNS = ("address", "city", "state", "postal_code", "country")
+
+
+def _migrate_flat_addresses(contact_columns: set[str]) -> None:
+    """
+    Copy pre-normalization flat address columns into the addresses table, once.
+    The legacy columns stay in place unmapped; dropping columns is destructive
+    and nothing reads them any more.
+    """
+    if not all(column in contact_columns for column in _LEGACY_ADDRESS_COLUMNS):
+        return
+
+    with engine.begin() as connection:
+        if connection.execute(text("SELECT COUNT(*) FROM addresses")).scalar_one() > 0:
+            return
+        connection.execute(
+            text(
+                "INSERT INTO addresses (contact_id, type, address, city, state, postal_code, country) "
+                "SELECT id, 'home', address, city, state, postal_code, country FROM contacts "
+                "WHERE COALESCE(address, '') != '' OR COALESCE(city, '') != '' "
+                "OR COALESCE(state, '') != '' OR COALESCE(postal_code, '') != '' "
+                "OR COALESCE(country, '') != ''"
+            )
+        )
