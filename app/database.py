@@ -63,6 +63,7 @@ def _upgrade_schema() -> None:
     added = {"photo_url": "VARCHAR(2000)"}
 
     existing = {column["name"] for column in inspect(engine).get_columns("contacts")}
+    _migrate_flat_addresses(existing)
     for name, ddl_type in added.items():
         if name in existing:
             continue
@@ -86,3 +87,52 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+_LEGACY_ADDRESS_COLUMNS = ("address", "city", "state", "postal_code", "country")
+
+
+def _migrate_flat_addresses(contact_columns: set[str]) -> None:
+    """
+    Move pre-normalization flat address columns into the addresses table.
+
+    Runs per contact and is idempotent: a contact's flat values are copied only
+    while that contact has no address rows, and copied values are cleared in the
+    same transaction, so re-running at every startup is a no-op and an
+    explicitly emptied address list is never resurrected from stale columns.
+    """
+    if not all(column in contact_columns for column in _LEGACY_ADDRESS_COLUMNS):
+        return
+
+    has_flat_values = (
+        "COALESCE(address, '') != '' OR COALESCE(city, '') != '' "
+        "OR COALESCE(state, '') != '' OR COALESCE(postal_code, '') != '' "
+        "OR COALESCE(country, '') != ''"
+    )
+
+    with engine.begin() as connection:
+        if engine.dialect.name == "postgresql":
+            # Serialize concurrent workers; SQLite already serializes writers.
+            connection.execute(text("LOCK TABLE addresses IN EXCLUSIVE MODE"))
+        connection.execute(
+            text(
+                "INSERT INTO addresses (contact_id, type, address, city, state, postal_code, country) "
+                f"SELECT id, 'home', address, city, state, postal_code, country FROM contacts "
+                f"WHERE ({has_flat_values}) "
+                "AND NOT EXISTS (SELECT 1 FROM addresses WHERE addresses.contact_id = contacts.id)"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE contacts SET address = NULL, city = NULL, state = NULL, "
+                "postal_code = NULL, country = NULL "
+                f"WHERE ({has_flat_values}) AND EXISTS ("
+                "SELECT 1 FROM addresses WHERE addresses.contact_id = contacts.id "
+                "AND addresses.type = 'home' "
+                "AND COALESCE(addresses.address, '') = COALESCE(contacts.address, '') "
+                "AND COALESCE(addresses.city, '') = COALESCE(contacts.city, '') "
+                "AND COALESCE(addresses.state, '') = COALESCE(contacts.state, '') "
+                "AND COALESCE(addresses.postal_code, '') = COALESCE(contacts.postal_code, '') "
+                "AND COALESCE(addresses.country, '') = COALESCE(contacts.country, ''))"
+            )
+        )

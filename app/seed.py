@@ -1,6 +1,6 @@
 from app.crud import count_contacts, create_contact
 from app.database import SessionLocal
-from app.schemas import ContactCreate
+from app.schemas import AddressCreate, ContactCreate
 
 SAMPLE_CONTACTS = [
     ContactCreate(
@@ -11,10 +11,18 @@ SAMPLE_CONTACTS = [
         company="Analytical Engines",
         job_title="Mathematician",
         photo_url="https://i.pravatar.cc/150?img=47",
-        city="San Francisco",
-        state="CA",
-        country="USA",
         notes="First programmer.",
+        addresses=[
+            AddressCreate(type="home", address="12 Bloomsbury Sq", city="London", country="UK"),
+            AddressCreate(
+                type="work",
+                address="1 Market St, Suite 400",
+                city="San Francisco",
+                state="CA",
+                postal_code="94105",
+                country="USA",
+            ),
+        ],
     ),
     ContactCreate(
         first_name="Grace",
@@ -24,9 +32,9 @@ SAMPLE_CONTACTS = [
         company="US Navy",
         job_title="Rear Admiral",
         photo_url="https://i.pravatar.cc/150?img=32",
-        city="Arlington",
-        state="VA",
-        country="USA",
+        addresses=[
+            AddressCreate(type="work", address="1 Navy Yard", city="Arlington", state="VA", country="USA"),
+        ],
     ),
     ContactCreate(
         first_name="Alan",
@@ -35,8 +43,6 @@ SAMPLE_CONTACTS = [
         phone="+44-20-5555-0103",
         company="Bletchley Park",
         job_title="Cryptanalyst",
-        city="London",
-        country="UK",
     ),
 ]
 

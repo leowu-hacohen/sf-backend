@@ -198,3 +198,151 @@ def test_init_db_adds_photo_url_to_legacy_table(client):
 
     columns = {column["name"] for column in inspect(engine).get_columns("contacts")}
     assert "photo_url" in columns
+
+
+def _address_count() -> int:
+    from sqlalchemy import func, select
+
+    from app.database import SessionLocal
+    from app.models import Address
+
+    with SessionLocal() as db:
+        return db.execute(select(func.count()).select_from(Address)).scalar_one()
+
+
+def test_create_contact_with_addresses(client, payload):
+    body = client.post(BASE, json=payload).json()
+    assert [(a["type"], a["city"]) for a in body["addresses"]] == [
+        ("home", "London"),
+        ("work", "San Francisco"),
+    ]
+    assert all(a["id"] > 0 for a in body["addresses"])
+
+
+def test_addresses_default_to_empty_list(client, payload):
+    body = client.post(BASE, json={**payload, "addresses": []}).json()
+    assert body["addresses"] == []
+
+
+def test_address_type_is_validated(client, payload):
+    bad = {**payload, "addresses": [{"type": "vacation", "city": "Maui"}]}
+    assert client.post(BASE, json=bad).status_code == 422
+
+
+def test_patch_without_addresses_keeps_them(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+
+    body = client.patch(f"{BASE}/{contact_id}", json={"company": "Acme"}).json()
+
+    assert body["company"] == "Acme"
+    assert len(body["addresses"]) == 2
+
+
+def test_patch_with_addresses_replaces_the_list(client, payload):
+    created = client.post(BASE, json=payload).json()
+    old_ids = {a["id"] for a in created["addresses"]}
+
+    body = client.patch(
+        f"{BASE}/{created['id']}",
+        json={"addresses": [{"type": "other", "city": "Cambridge"}]},
+    ).json()
+
+    assert [(a["type"], a["city"]) for a in body["addresses"]] == [("other", "Cambridge")]
+    assert old_ids.isdisjoint(a["id"] for a in body["addresses"])
+    assert _address_count() == 1  # replaced rows are deleted, not orphaned
+
+
+def test_patch_null_addresses_clears_the_list(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    body = client.patch(f"{BASE}/{contact_id}", json={"addresses": None}).json()
+    assert body["addresses"] == []
+    assert _address_count() == 0
+
+
+def test_put_replaces_addresses(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+
+    replacement = {**payload, "addresses": [{"type": "work", "city": "Zurich"}]}
+    body = client.put(f"{BASE}/{contact_id}", json=replacement).json()
+
+    assert [(a["type"], a["city"]) for a in body["addresses"]] == [("work", "Zurich")]
+    assert _address_count() == 1
+
+
+def test_deleting_contact_deletes_addresses(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    assert _address_count() == 2
+
+    assert client.delete(f"{BASE}/{contact_id}").status_code == 204
+    assert _address_count() == 0
+
+
+def test_init_db_migrates_legacy_flat_addresses(client):
+    from sqlalchemy import text
+
+    from app.database import engine, init_db
+
+    with engine.begin() as connection:
+        for ddl in (
+            "ALTER TABLE contacts ADD COLUMN address VARCHAR(300)",
+            "ALTER TABLE contacts ADD COLUMN city VARCHAR(120)",
+            "ALTER TABLE contacts ADD COLUMN state VARCHAR(120)",
+            "ALTER TABLE contacts ADD COLUMN postal_code VARCHAR(20)",
+            "ALTER TABLE contacts ADD COLUMN country VARCHAR(120)",
+        ):
+            connection.execute(text(ddl))
+        connection.execute(
+            text(
+                "INSERT INTO contacts (first_name, last_name, email, city, country, created_at, updated_at) "
+                "VALUES ('Old', 'Timer', 'old@example.com', 'Boston', 'USA', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+
+    init_db()
+
+    contact = client.get(BASE).json()["items"][0]
+    assert [(a["type"], a["city"], a["country"]) for a in contact["addresses"]] == [
+        ("home", "Boston", "USA")
+    ]
+
+    # Idempotent: another startup must not duplicate the migrated row.
+    init_db()
+    assert len(client.get(f"{BASE}/{contact['id']}").json()["addresses"]) == 1
+
+    # Move, not copy: clearing the list must survive the next startup.
+    client.patch(f"{BASE}/{contact['id']}", json={"addresses": []})
+    init_db()
+    assert client.get(f"{BASE}/{contact['id']}").json()["addresses"] == []
+
+
+def test_legacy_migration_covers_contacts_missed_earlier(client, payload):
+    from sqlalchemy import text
+
+    from app.database import engine, init_db
+
+    already_normalized = client.post(BASE, json=payload).json()
+
+    with engine.begin() as connection:
+        for ddl in (
+            "ALTER TABLE contacts ADD COLUMN address VARCHAR(300)",
+            "ALTER TABLE contacts ADD COLUMN city VARCHAR(120)",
+            "ALTER TABLE contacts ADD COLUMN state VARCHAR(120)",
+            "ALTER TABLE contacts ADD COLUMN postal_code VARCHAR(20)",
+            "ALTER TABLE contacts ADD COLUMN country VARCHAR(120)",
+        ):
+            connection.execute(text(ddl))
+        connection.execute(
+            text(
+                "INSERT INTO contacts (first_name, last_name, email, city, created_at, updated_at) "
+                "VALUES ('Old', 'Timer', 'old@example.com', 'Boston', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+
+    init_db()
+
+    items = client.get(BASE).json()["items"]
+    by_email = {c["email"]: c["addresses"] for c in items}
+    # The legacy-only contact was migrated even though other rows already existed...
+    assert [a["city"] for a in by_email["old@example.com"]] == ["Boston"]
+    # ...and the already-normalized contact was left exactly as it was.
+    assert by_email[already_normalized["email"]] == already_normalized["addresses"]

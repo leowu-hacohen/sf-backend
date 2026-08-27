@@ -107,12 +107,18 @@ also read):
 (case-insensitive). Everything else is optional.
 
 ```
-first_name, last_name, email, phone, company, job_title, photo_url,
-address, city, state, postal_code, country, notes
+first_name, last_name, email, phone, company, job_title, photo_url, notes,
+addresses[]
 ```
 
 `photo_url` is nullable, at most 2000 characters, and must be an absolute
 `http(s)` URL with a host; clients fall back to initials when it is unset.
+
+`addresses` is a list of address objects (`type` of `home`/`work`/`other`,
+plus optional `address`, `city`, `state`, `postal_code`, `country`). `POST`
+creates them with the contact, `PUT` and a `PATCH` that includes `addresses`
+replace the whole list, and a `PATCH` that omits `addresses` leaves them
+untouched. Responses order them by type, then id.
 
 Responses add `id`, `full_name`, `created_at`, and `updated_at` (UTC).
 
