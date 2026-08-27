@@ -144,3 +144,29 @@ def test_delete_contact(client, payload):
 def test_root_lists_entrypoints(client):
     body = client.get("/").json()
     assert body["contacts"] == BASE
+
+
+def test_create_contact_with_photo_url(client, payload):
+    photo = "https://i.pravatar.cc/150?img=47"
+    response = client.post(BASE, json={**payload, "photo_url": photo})
+    assert response.status_code == 201
+    assert response.json()["photo_url"] == photo
+
+
+def test_photo_url_defaults_to_none(client, payload):
+    response = client.post(BASE, json=payload)
+    assert response.status_code == 201
+    assert response.json()["photo_url"] is None
+
+
+def test_photo_url_rejects_non_http_schemes(client, payload):
+    for bad in ("javascript:alert(1)", "ftp://example.com/a.png", "not a url"):
+        response = client.post(BASE, json={**payload, "photo_url": bad})
+        assert response.status_code == 422
+
+
+def test_patch_can_set_and_clear_photo_url(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    photo = "https://i.pravatar.cc/150?img=5"
+    assert client.patch(f"{BASE}/{contact_id}", json={"photo_url": photo}).json()["photo_url"] == photo
+    assert client.patch(f"{BASE}/{contact_id}", json={"photo_url": None}).json()["photo_url"] is None
