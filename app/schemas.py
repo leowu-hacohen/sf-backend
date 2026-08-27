@@ -9,7 +9,7 @@ def _require_http_url(value: str | None) -> str | None:
     if value is None:
         return value
     parts = urlsplit(value)
-    if parts.scheme.lower() not in ("http", "https") or not parts.netloc:
+    if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
         raise ValueError("photo_url must be an absolute http(s) URL, e.g. https://example.com/me.png")
     return value
 

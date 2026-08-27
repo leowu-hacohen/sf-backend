@@ -160,7 +160,15 @@ def test_photo_url_defaults_to_none(client, payload):
 
 
 def test_photo_url_rejects_non_http_schemes_and_hostless_urls(client, payload):
-    for bad in ("javascript:alert(1)", "ftp://example.com/a.png", "not a url", "https://", "http:///path"):
+    for bad in (
+        "javascript:alert(1)",
+        "ftp://example.com/a.png",
+        "not a url",
+        "https://",
+        "http:///path",
+        "https://@/x",
+        "https://:443/x",
+    ):
         response = client.post(BASE, json={**payload, "photo_url": bad})
         assert response.status_code == 422
 
