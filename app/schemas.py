@@ -1,6 +1,17 @@
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field, field_validator
+
+
+def _require_http_url(value: str | None) -> str | None:
+    """Accept only absolute http(s) URLs with a host, so stored photo links are safe to render."""
+    if value is None:
+        return value
+    parts = urlsplit(value)
+    if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
+        raise ValueError("photo_url must be an absolute http(s) URL, e.g. https://example.com/me.png")
+    return value
 
 
 class ContactBase(BaseModel):
@@ -44,6 +55,12 @@ class ContactBase(BaseModel):
         description="Role held at the company.",
         examples=["Mathematician"],
     )
+    photo_url: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="Absolute http(s) URL of the contact's photo. Clients fall back to initials when unset.",
+        examples=["https://i.pravatar.cc/150?img=47"],
+    )
     address: str | None = Field(
         default=None,
         max_length=300,
@@ -70,6 +87,8 @@ class ContactBase(BaseModel):
         examples=["Met at the SF hackathon."],
     )
 
+    _validate_photo_url = field_validator("photo_url")(_require_http_url)
+
 
 _FULL_EXAMPLE = {
     "first_name": "Ada",
@@ -78,6 +97,7 @@ _FULL_EXAMPLE = {
     "phone": "+1-415-555-0101",
     "company": "Analytical Engines",
     "job_title": "Mathematician",
+    "photo_url": "https://i.pravatar.cc/150?img=47",
     "address": "1 Market St, Suite 400",
     "city": "San Francisco",
     "state": "CA",
@@ -128,12 +148,19 @@ class ContactUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=40, description="New phone number.")
     company: str | None = Field(default=None, max_length=200, description="New company.")
     job_title: str | None = Field(default=None, max_length=200, description="New job title.")
+    photo_url: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="New photo URL; must be absolute http(s). Send `null` to fall back to initials.",
+    )
     address: str | None = Field(default=None, max_length=300, description="New street address.")
     city: str | None = Field(default=None, max_length=120, description="New city.")
     state: str | None = Field(default=None, max_length=120, description="New state or region.")
     postal_code: str | None = Field(default=None, max_length=20, description="New postal code.")
     country: str | None = Field(default=None, max_length=120, description="New country.")
     notes: str | None = Field(default=None, description="New notes; replaces the existing text.")
+
+    _validate_photo_url = field_validator("photo_url")(_require_http_url)
 
 
 class ContactRead(ContactBase):

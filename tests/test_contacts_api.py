@@ -144,3 +144,57 @@ def test_delete_contact(client, payload):
 def test_root_lists_entrypoints(client):
     body = client.get("/").json()
     assert body["contacts"] == BASE
+
+
+def test_create_contact_with_photo_url(client, payload):
+    photo = "https://i.pravatar.cc/150?img=47"
+    response = client.post(BASE, json={**payload, "photo_url": photo})
+    assert response.status_code == 201
+    assert response.json()["photo_url"] == photo
+
+
+def test_photo_url_defaults_to_none(client, payload):
+    response = client.post(BASE, json=payload)
+    assert response.status_code == 201
+    assert response.json()["photo_url"] is None
+
+
+def test_photo_url_rejects_non_http_schemes_and_hostless_urls(client, payload):
+    for bad in (
+        "javascript:alert(1)",
+        "ftp://example.com/a.png",
+        "not a url",
+        "https://",
+        "http:///path",
+        "https://@/x",
+        "https://:443/x",
+    ):
+        response = client.post(BASE, json={**payload, "photo_url": bad})
+        assert response.status_code == 422
+
+
+def test_photo_url_scheme_is_case_insensitive(client, payload):
+    response = client.post(BASE, json={**payload, "photo_url": "HTTPS://example.com/me.png"})
+    assert response.status_code == 201
+
+
+def test_patch_can_set_and_clear_photo_url(client, payload):
+    contact_id = client.post(BASE, json=payload).json()["id"]
+    photo = "https://i.pravatar.cc/150?img=5"
+    assert client.patch(f"{BASE}/{contact_id}", json={"photo_url": photo}).json()["photo_url"] == photo
+    assert client.patch(f"{BASE}/{contact_id}", json={"photo_url": None}).json()["photo_url"] is None
+
+
+def test_init_db_adds_photo_url_to_legacy_table(client):
+    from sqlalchemy import inspect, text
+
+    from app.database import engine, init_db
+
+    # Simulate a database created before photo_url existed.
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE contacts DROP COLUMN photo_url"))
+
+    init_db()
+
+    columns = {column["name"] for column in inspect(engine).get_columns("contacts")}
+    assert "photo_url" in columns
